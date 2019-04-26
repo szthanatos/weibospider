@@ -3,12 +3,13 @@ import time
 import signal
 
 import requests
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 from config import headers
 from logger import crawler
 from login import get_cookies
 from db.dao import LoginInfoOper
-from utils import send_email
+from utils import (send_email, getip)
 from db.redis_db import (
     Urls, Cookies)
 from page_parse import (
@@ -24,6 +25,10 @@ INTERAL = get_crawl_interal()
 MAX_RETRIES = get_max_retries()
 EXCP_INTERAL = get_excp_interal()
 COOKIES = get_cookies()
+
+
+# Disable annoying InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 
 def is_banned(url):
@@ -53,13 +58,21 @@ def get_page(url, auth_level=2, is_ajax=False, need_proxy=False):
                 crawler.warning('No cookie in cookies pool. Maybe all accounts are banned, or all cookies are expired')
                 send_email()
                 os.kill(os.getppid(), signal.SIGTERM)
+
+            # There is no difference between http and https address.
+            proxy = {'http': name_cookies[2], 'https': name_cookies[2], }
+        else:
+            proxy = getip.getIPWithoutLogin('')
+            # if proxy['http'] is None:
+            #     crawler.warning('No available ip in ip pools. Using local ip instead.')
+        
         try:
             if auth_level == 2:
-                resp = requests.get(url, headers=headers, cookies=name_cookies[1], timeout=TIME_OUT, verify=False)
+                resp = requests.get(url, headers=headers, cookies=name_cookies[1], timeout=TIME_OUT, verify=False, proxies=proxy)
             elif auth_level == 1:
-                resp = requests.get(url, headers=headers, cookies=COOKIES, timeout=TIME_OUT, verify=False)
+                resp = requests.get(url, headers=headers, cookies=COOKIES, timeout=TIME_OUT, verify=False, proxies=proxy)
             else:
-                resp = requests.get(url, headers=headers, timeout=TIME_OUT, verify=False)
+                resp = requests.get(url, headers=headers, timeout=TIME_OUT, verify=False, proxies=proxy)
         except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError, AttributeError) as e:
             crawler.warning('Excepitons are raised when crawling {}.Here are details:{}'.format(url, e))
             count += 1

@@ -5,8 +5,8 @@ from sqlalchemy.exc import InvalidRequestError
 
 from .basic import db_session
 from .models import (
-    LoginInfo, KeywordsWbdata, KeyWords, SeedIds,
-    WeiboComment, WeiboRepost, User,  WeiboData
+    LoginInfo, KeywordsWbdata, KeyWords, SeedIds, UserRelation,
+    WeiboComment, WeiboRepost, User, WeiboData, WeiboPraise
 )
 from decorators import db_commit_decorator
 
@@ -153,9 +153,19 @@ class UserOper(CommonOper):
     def get_user_by_uid(cls, uid):
         return db_session.query(User).filter(User.uid == uid).first()
 
+    @classmethod
+    def get_user_by_name(cls,user_name):
+        return db_session.query(User).filter(User.name == user_name).first()
+
 
 class UserRelationOper(CommonOper):
-    pass
+    @classmethod
+    def get_user_by_uid(cls, uid, other_id, type):
+        user = db_session.query(UserRelation).filter_by(user_id = uid, follow_or_fans_id = other_id).first()
+        if user:
+            return True
+        else:
+            return False 
 
 
 class WbDataOper(CommonOper):
@@ -168,8 +178,16 @@ class WbDataOper(CommonOper):
         return db_session.query(WeiboData.weibo_id).filter(text('comment_crawled=0')).all()
 
     @classmethod
+    def get_weibo_praise_not_crawled(cls):
+        return db_session.query(WeiboData.weibo_id).filter(text('praise_crawled=0')).all()
+
+    @classmethod
     def get_weibo_repost_not_crawled(cls):
         return db_session.query(WeiboData.weibo_id, WeiboData.uid).filter(text('repost_crawled=0')).all()
+
+    @classmethod
+    def get_weibo_dialogue_not_crawled(cls):
+        return db_session.query(WeiboData.weibo_id).filter(text('dialogue_crawled=0')).all()
 
     @classmethod
     @db_commit_decorator
@@ -181,10 +199,26 @@ class WbDataOper(CommonOper):
 
     @classmethod
     @db_commit_decorator
+    def set_weibo_praise_crawled(cls, mid):
+        data = cls.get_wb_by_mid(mid)
+        if data:
+            data.praise_crawled = 1
+            db_session.commit()
+
+    @classmethod
+    @db_commit_decorator
     def set_weibo_repost_crawled(cls, mid):
         data = cls.get_wb_by_mid(mid)
         if data:
             data.repost_crawled = 1
+            db_session.commit()
+
+    @classmethod
+    @db_commit_decorator
+    def set_weibo_dialogue_crawled(cls, mid):
+        data = cls.get_wb_by_mid(mid)
+        if data:
+            data.dialogue_crawled = 1
             db_session.commit()
 
 
@@ -193,6 +227,10 @@ class CommentOper(CommonOper):
     def get_comment_by_id(cls, cid):
         return db_session.query(WeiboComment).filter(WeiboComment.comment_id == cid).first()
 
+class PraiseOper(CommonOper):
+    @classmethod
+    def get_Praise_by_id(cls, pid):
+        return db_session.query(WeiboPraise).filter(WeiboPraise.weibo_id == pid).first()
 
 class RepostOper(CommonOper):
     @classmethod

@@ -4,7 +4,7 @@ from logger import crawler
 from .workers import app
 from page_parse.user import public
 from page_get import get_page
-from config import get_max_home_page
+from config import (get_max_home_page, get_time_after)
 from db.dao import (
     WbDataOper, SeedidsOper)
 from page_parse.home import (
@@ -17,6 +17,16 @@ AJAX_URL = 'http://weibo.com/p/aj/v6/mblog/mbloglist?ajwvr=6&domain={}&pagebar={
            '&pre_page={}&__rnd={}'
 
 
+def determine(weibo_datum, timeafter):
+    weibo_time = time.mktime(
+        time.strptime(weibo_datum.create_time, '%Y-%m-%d %H:%M'))
+    if weibo_time < timeafter:
+        return False
+    if WbDataOper.get_wb_by_mid(weibo_datum.weibo_id):
+        return False
+    return True
+
+
 @app.task(ignore_result=True)
 def crawl_ajax_page(url, auth_level):
     """
@@ -25,11 +35,18 @@ def crawl_ajax_page(url, auth_level):
     :return: resp.text
     """
     ajax_html = get_page(url, auth_level, is_ajax=True)
-    ajax_wbdatas = get_ajax_data(ajax_html)
-    if not ajax_wbdatas:
+    ajax_wbdata = get_ajax_data(ajax_html)
+    if not ajax_wbdata:
         return ''
 
-    WbDataOper.add_all(ajax_wbdatas)
+    timeafter = time.mktime(
+        time.strptime(get_time_after(), '%Y-%m-%d %H:%M:%S'))
+    ajax_wbdata = [
+        ajax_wbdatum for ajax_wbdatum in ajax_wbdata
+        if determine(ajax_wbdatum, timeafter)
+    ]
+
+    WbDataOper.add_all(ajax_wbdata)
     return ajax_html
 
 
@@ -49,7 +66,20 @@ def crawl_weibo_datas(uid):
             crawler.warning("user {} has no weibo".format(uid))
             return
 
+        # Check whether weibo created after time in spider.yaml
+        length_weibo_datas = len(weibo_datas)
+        timeafter = time.mktime(
+            time.strptime(get_time_after(), '%Y-%m-%d %H:%M:%S'))
+        weibo_datas = [
+            weibo_datum for weibo_datum in weibo_datas
+            if determine(weibo_datum, timeafter)
+        ]
+
         WbDataOper.add_all(weibo_datas)
+
+        # If the weibo isn't created after the given time, jump out the loop
+        if len(weibo_datas) != length_weibo_datas:
+            break
 
         domain = public.get_userdomain(html)
         cur_time = int(time.time()*1000)
@@ -60,17 +90,25 @@ def crawl_weibo_datas(uid):
             # here we use local call to get total page number
             total_page = get_total_page(crawl_ajax_page(ajax_url_1, 2))
             auth_level = 1
+
+            if total_page < limit:
+                limit = total_page
+
+            # Since the second ajax of page 1 has already been crawled
+            # in the code above and has been stored in databse,
+            # we only have to crawl the first ajax of page 1
+            crawl_ajax_page(ajax_url_0, auth_level)
+
         else:
             auth_level = 2
 
-        if total_page < limit:
-            limit = total_page
+            # Still the same as before
+        # if total_page != limit:
+        #     limit = total_page
+        #     crawler.warning("total pagenum is {}".format(total_page))
+        crawl_ajax_page(ajax_url_0, auth_level)
+        crawl_ajax_page(ajax_url_1, auth_level)
 
-        app.send_task('tasks.home.crawl_ajax_page', args=(ajax_url_0, auth_level), queue='ajax_home_crawler',
-                      routing_key='ajax_home_info')
-
-        app.send_task('tasks.home.crawl_ajax_page', args=(ajax_url_1, auth_level), queue='ajax_home_crawler',
-                      routing_key='ajax_home_info')
         cur_page += 1
 
     SeedidsOper.set_seed_home_crawled(uid)
